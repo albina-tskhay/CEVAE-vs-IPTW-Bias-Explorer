@@ -145,8 +145,8 @@ if uploaded_file:
         ps = ps_model.predict_proba(Z)[:, 1]
         weights = T / ps + (1 - T) / (1 - ps)
         iptw_model = sm.WLS(Y, sm.add_constant(T), weights=weights).fit()
-        iptw_ate = iptw_model.params[1]
-        se_iptw = iptw_model.bse[1]
+        iptw_ate = iptw_model.params.iloc[1]
+        se_iptw = iptw_model.bse.iloc[1]
         ci_iptw_low = iptw_ate - 1.96 * se_iptw
         ci_iptw_high = iptw_ate + 1.96 * se_iptw
         iptw_bias = 100 * (iptw_ate - TRUE_ATE) / TRUE_ATE
