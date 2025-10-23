@@ -1,3 +1,5 @@
+import warnings
+warnings.filterwarnings("ignore", category=SyntaxWarning)
 import streamlit as st
 import pandas as pd
 import numpy as np
