@@ -39,8 +39,8 @@ try:
             )
             cevae.fit(
                 xr, tr, yr,
-                num_epochs=200,
-                batch_size=64,
+                num_epochs=100,
+                batch_size=128,
                 learning_rate=1e-4,
                 learning_rate_decay=0.5,
                 weight_decay=1e-5
@@ -51,9 +51,11 @@ try:
             return ite.mean()
 
         n_jobs = min(num_bootstrap, os.cpu_count() or 1)
-        ates = Parallel(n_jobs=n_jobs)(
-            delayed(train_and_estimate_ate_balanced)() for _ in tqdm(range(num_bootstrap))
-        )
+        ates = []
+        for _ in tqdm(range(num_bootstrap)):
+        ate = train_and_estimate_ate_balanced()
+        ates.append(ate)
+
         lower, upper = np.percentile(ates, [2.5, 97.5])
         return np.mean(ates), lower, upper
 
