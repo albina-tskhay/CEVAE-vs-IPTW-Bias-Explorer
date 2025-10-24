@@ -53,8 +53,8 @@ try:
         n_jobs = min(num_bootstrap, os.cpu_count() or 1)
         ates = []
         for _ in tqdm(range(num_bootstrap)):
-        ate = train_and_estimate_ate_balanced()
-        ates.append(ate)
+            ate = train_and_estimate_ate_balanced()
+            ates.append(ate)
 
         lower, upper = np.percentile(ates, [2.5, 97.5])
         return np.mean(ates), lower, upper
