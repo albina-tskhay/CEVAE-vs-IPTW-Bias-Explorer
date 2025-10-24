@@ -2,8 +2,8 @@ streamlit>=1.25
 pandas>=2.0
 numpy>=1.24
 scikit-learn>=1.3
-statsmodels<=0.14
-torch>=2.7
+statsmodels==0.13.5
 pyro-ppl
+torch
 tqdm
 joblib
