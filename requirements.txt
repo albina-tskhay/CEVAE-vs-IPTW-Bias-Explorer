@@ -7,3 +7,4 @@ torch>=2.7
 pyro-ppl
 tqdm
 joblib
+click>=8.1.0,<9.0
