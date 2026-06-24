@@ -59,14 +59,20 @@ def fit_cevae_once(x, t, y, feature_dim, outcome_dist,
 
 
 def fit_iptw(proxies_df, t, y):
-    """Fit IPTW via logistic-regression propensity scores. Returns (ate, (ci_low, ci_high))."""
+    """Fit IPTW via logistic-regression propensity scores. Returns (ate, (ci_low, ci_high)).
+    Accepts t and y as either pandas Series or numpy arrays; statsmodels returns
+    .params as a pandas Series for Series input but as a plain ndarray for
+    array input, so we index with np.asarray(...)[1] rather than .iloc[1] to
+    handle both cases."""
     ps_model = LogisticRegression(max_iter=1000)
     ps_model.fit(proxies_df, t)
     ps = np.clip(ps_model.predict_proba(proxies_df)[:, 1], 0.02, 0.98)
-    weights = t / ps + (1 - t) / (1 - ps)
-    model = sm.WLS(y, sm.add_constant(t), weights=weights).fit()
-    ate = float(model.params.iloc[1])
-    se = float(model.bse.iloc[1])
+    t_arr = np.asarray(t)
+    y_arr = np.asarray(y)
+    weights = t_arr / ps + (1 - t_arr) / (1 - ps)
+    model = sm.WLS(y_arr, sm.add_constant(t_arr), weights=weights).fit()
+    ate = float(np.asarray(model.params)[1])
+    se = float(np.asarray(model.bse)[1])
     return ate, (ate - 1.96 * se, ate + 1.96 * se)
 
 
@@ -81,7 +87,7 @@ def bootstrap_iptw(x_np, t_np, y_np, n_boot, n_jobs, seed=0):
         ps = np.clip(ps_model.predict_proba(x_np[idx])[:, 1], 0.02, 0.98)
         w = t_np[idx] / ps + (1 - t_np[idx]) / (1 - ps)
         m = sm.WLS(y_np[idx], sm.add_constant(t_np[idx]), weights=w).fit()
-        return float(m.params[1])
+        return float(np.asarray(m.params)[1])
 
     results = Parallel(n_jobs=n_jobs, prefer="processes")(
         delayed(one_run)(i) for i in range(n_boot)
