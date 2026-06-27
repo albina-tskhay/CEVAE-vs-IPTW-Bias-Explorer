@@ -6,7 +6,7 @@ Redesigned app:
   synthetic U/T/Y from user-set sliders, for understanding method behavior
   under known ground truth).
 - CI toggle: off (fast, point estimates only) vs on (bootstrapped CIs,
-  slower, parallelized).
+  slower, runs sequentially).
 - No fixed divergence threshold. The app reports both estimates and the
   gap between them; the user decides what gap is meaningful for their case.
 - Fast defaults (hidden_dim=20, num_layers=2, early stopping) so a single
@@ -26,7 +26,8 @@ import logging
 logging.basicConfig(level=logging.WARNING)  # was DEBUG; that alone was slowing every run via console I/O
 
 from cevae_iptw_core import (
-    fit_cevae_once, fit_iptw, bootstrap_iptw, bootstrap_cevae, default_n_jobs,
+    fit_cevae_once, fit_iptw, bootstrap_iptw, bootstrap_cevae,
+    select_hyperparameters,
     DEFAULT_HIDDEN_DIM, DEFAULT_NUM_LAYERS, DEFAULT_NUM_EPOCHS,
 )
 
@@ -63,6 +64,16 @@ compute_ci = st.checkbox(
          "On: bootstrapped 95% CIs for both methods, slower (refits the model many times)."
 )
 
+tune_hyperparameters = st.checkbox(
+    "Select CEVAE network size by validation (recommended)",
+    value=True,
+    help="Tries a small set of network sizes, scores each on a held-out "
+         "split of your data, and uses the best-scoring one. Adds roughly "
+         "30-60 seconds. Off: uses one fixed network size for every "
+         "dataset, which is faster but may fit poorly for datasets very "
+         "different in size or proxy count from what this app was tested on."
+)
+
 uploaded_file = st.file_uploader("Upload your CSV dataset", type="csv")
 
 if uploaded_file:
@@ -84,7 +95,14 @@ if uploaded_file:
         )
 
         if compute_ci:
-            n_boot = st.number_input("Bootstrap iterations", min_value=20, max_value=500, value=100, step=20)
+            n_boot = st.number_input(
+                "Bootstrap iterations", min_value=10, max_value=60, value=20, step=10,
+                help="Each iteration refits CEVAE from scratch, sequentially, using "
+                     "whichever network size was selected above. Expect roughly "
+                     "4-6 seconds per iteration, plus 15-30 seconds upfront if "
+                     "network size selection is on. 20 iterations is usually "
+                     "1-2 minutes total; 60 can take 5-7 minutes."
+            )
 
         run = st.button("Run comparison")
 
@@ -100,20 +118,30 @@ if uploaded_file:
             x_np = proxies_df.values
             outcome_dist = "bernoulli" if set(np.unique(y)) <= {0.0, 1.0} else "normal"
 
-            n_jobs = default_n_jobs()
-
             t0 = time.time()
             with st.spinner("Fitting IPTW..."):
                 iptw_ate, iptw_ci = fit_iptw(proxies_df, work[t_var], work[y_var])
 
-            with st.spinner("Fitting CEVAE (single fit, fast defaults)..."):
+            if tune_hyperparameters:
+                with st.spinner("Selecting CEVAE network size by validation..."):
+                    hidden_dim, num_layers, hp_scores = select_hyperparameters(
+                        x_np, t, y, outcome_dist, seed=42,
+                    )
+                st.caption(
+                    f"Selected network size: hidden_dim={hidden_dim}, num_layers={num_layers} "
+                    f"(chosen from {len(hp_scores)} candidates by held-out fit quality)."
+                )
+            else:
+                hidden_dim, num_layers = DEFAULT_HIDDEN_DIM, DEFAULT_NUM_LAYERS
+
+            with st.spinner("Fitting CEVAE..."):
                 x_t = torch.tensor(x_np, dtype=torch.float32)
                 t_t = torch.tensor(t, dtype=torch.float32)
                 y_t = torch.tensor(y, dtype=torch.float32)
                 cevae_ate = fit_cevae_once(
                     x_t, t_t, y_t,
                     feature_dim=x_np.shape[1], outcome_dist=outcome_dist,
-                    hidden_dim=20, num_layers=2,
+                    hidden_dim=hidden_dim, num_layers=num_layers,
                     num_epochs=80, batch_size=min(200, len(work)),
                     learning_rate=1e-3, seed=42,
                 )
@@ -122,12 +150,27 @@ if uploaded_file:
             cevae_ci = (np.nan, np.nan)
             iptw_ci_boot = iptw_ci
             if compute_ci:
-                with st.spinner(f"Bootstrapping {n_boot} iterations for both methods (parallelized across {n_jobs} workers)..."):
-                    iptw_boot = bootstrap_iptw(x_np, t, y, n_boot=n_boot, n_jobs=n_jobs)
-                    iptw_ci_boot = tuple(np.percentile(iptw_boot, [2.5, 97.5]))
+                st.warning(
+                    "Bootstrapping refits CEVAE from scratch on every iteration, "
+                    "using the network size selected above. This runs sequentially "
+                    "and can take a couple of minutes for 30+ iterations. IPTW's "
+                    "bootstrap is fast; CEVAE's is the slow part."
+                )
+                iptw_boot = bootstrap_iptw(x_np, t, y, n_boot=n_boot)
+                iptw_ci_boot = tuple(np.percentile(iptw_boot, [2.5, 97.5]))
 
-                    cevae_boot = bootstrap_cevae(x_np, t, y, outcome_dist, n_boot=n_boot, n_jobs=n_jobs)
-                    cevae_ci = tuple(np.percentile(cevae_boot, [2.5, 97.5]))
+                progress_bar = st.progress(0, text="Bootstrapping CEVAE: 0 / {}".format(n_boot))
+
+                def _update_progress(done, total):
+                    progress_bar.progress(done / total, text=f"Bootstrapping CEVAE: {done} / {total}")
+
+                cevae_boot = bootstrap_cevae(
+                    x_np, t, y, outcome_dist, n_boot=n_boot,
+                    hidden_dim=hidden_dim, num_layers=num_layers,
+                    progress_callback=_update_progress,
+                )
+                cevae_ci = tuple(np.percentile(cevae_boot, [2.5, 97.5]))
+                progress_bar.empty()
 
             st.subheader("Results")
             results_df = pd.DataFrame({
